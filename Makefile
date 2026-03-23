@@ -1,4 +1,4 @@
-.PHONY: build test run clean lint fmt vet help
+.PHONY: build test run clean lint fmt vet proto help
 
 BINARY_NAME=app
 GO=go
@@ -14,6 +14,10 @@ help:
 	@echo "  lint     - Run linter (requires golangci-lint)"
 	@echo "  fmt      - Format code"
 	@echo "  vet      - Run go vet"
+	@echo "  proto    - Generate Go code from proto files"
+
+proto:
+	protoc --go_out=. --go_opt=module=github.com/richardtan10176/crypto_analytics proto/trade.proto
 
 build:
 	$(GO) build $(GOFLAGS) -o $(BINARY_NAME) .

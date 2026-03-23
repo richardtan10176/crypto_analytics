@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package cryptoanalytics;
+
+option go_package = "github.com/richardtan10176/crypto_analytics/gen/trade";
+
+// TradeEvent message represents an atomic trade from the binance websocket stream.
+message TradeEvent {
+  string event_type = 1;      // "e": always "trade"
+  int64  event_time = 2;      // "E": event time (ms epoch)
+  string symbol     = 3;      // "s": e.g. "BTCUSDT", "BNBUSDT"
+  int64  trade_id   = 4;      // "t": unique trade ID
+  string price      = 5;      // "p": price (string to preserve decimal precision)
+  string quantity   = 6;      // "q": quantity (string to preserve decimal precision)
+  int64  trade_time = 7;      // "T": trade execution time (ms epoch)
+  bool   is_maker   = 8;      // "m": true if buyer is the market maker
+}
