@@ -1,4 +1,4 @@
-.PHONY: build test run clean lint fmt vet proto help
+.PHONY: build test run clean lint fmt vet proto docker-up docker-down docker-logs help
 
 BINARY_NAME=app
 GO=go
@@ -14,10 +14,22 @@ help:
 	@echo "  lint     - Run linter (requires golangci-lint)"
 	@echo "  fmt      - Format code"
 	@echo "  vet      - Run go vet"
-	@echo "  proto    - Generate Go code from proto files"
+	@echo "  proto       - Generate Go code from proto files"
+	@echo "  docker-up   - Start Kafka in the background"
+	@echo "  docker-down - Stop and remove Kafka containers"
+	@echo "  docker-logs - Tail Kafka container logs"
 
 proto:
 	protoc --go_out=. --go_opt=module=github.com/richardtan10176/crypto_analytics proto/trade.proto
+
+docker-up:
+	docker compose up -d
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs -f
 
 build:
 	$(GO) build $(GOFLAGS) -o $(BINARY_NAME) .
