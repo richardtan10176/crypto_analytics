@@ -14,7 +14,7 @@ type Producer struct {
 func New(ctx context.Context, brokerAddr, topic string) (*Producer, error) {
 	conn, err := kafka.DialContext(ctx, "tcp", brokerAddr)
 	if err != nil {
-		return nil, fmt.Errorf("dial broker: %w", err)
+		return nil, fmt.Errorf("damn we couldnt get the broker: %w", err)
 	}
 	defer conn.Close()
 
@@ -24,7 +24,7 @@ func New(ctx context.Context, brokerAddr, topic string) (*Producer, error) {
 		ReplicationFactor: 1,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create topic: %w", err)
+		return nil, fmt.Errorf("could not create topic: %w", err)
 	}
 
 	return &Producer{
