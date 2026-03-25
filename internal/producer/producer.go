@@ -2,6 +2,7 @@ package producer
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -10,15 +11,29 @@ type Producer struct {
 	writer *kafka.Writer
 }
 
-func New(brokerAddr, topic string) *Producer {
+func New(ctx context.Context, brokerAddr, topic string) (*Producer, error) {
+	conn, err := kafka.DialContext(ctx, "tcp", brokerAddr)
+	if err != nil {
+		return nil, fmt.Errorf("dial broker: %w", err)
+	}
+	defer conn.Close()
+
+	err = conn.CreateTopics(kafka.TopicConfig{
+		Topic:             topic,
+		NumPartitions:     1,
+		ReplicationFactor: 1,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create topic: %w", err)
+	}
+
 	return &Producer{
 		writer: &kafka.Writer{
-			Addr:                   kafka.TCP(brokerAddr),
-			Topic:                  topic,
-			Balancer:               &kafka.LeastBytes{},
-			AllowAutoTopicCreation: true,
+			Addr:     kafka.TCP(brokerAddr),
+			Topic:    topic,
+			Balancer: &kafka.LeastBytes{},
 		},
-	}
+	}, nil
 }
 
 // Publish sends a serialized message to Kafka. key should be the trade symbol

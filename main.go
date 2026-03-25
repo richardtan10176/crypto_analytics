@@ -26,13 +26,18 @@ type rawTrade struct {
 }
 
 func main() {
+
+	// connect to binance WSS
 	godotenv.Load()
 
 	brokerAddr := os.Getenv("KAFKA_BROKER")
 	topic := os.Getenv("KAFKA_TOPIC")
 	wsURL := os.Getenv("BINANCE_WS_URL")
 
-	p := producer.New(brokerAddr, topic)
+	p, err := producer.New(context.Background(), brokerAddr, topic)
+	if err != nil {
+		log.Fatal("producer:", err)
+	}
 	defer p.Close()
 
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
@@ -42,14 +47,16 @@ func main() {
 	defer conn.Close()
 
 	log.Println("Connected to", wsURL)
-
+	
+	// Start reading from WSS
 	for {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			log.Println("read error:", err)
 			return
 		}
-
+		
+		
 		var raw rawTrade
 		if err := json.Unmarshal(msg, &raw); err != nil {
 			log.Println("parse error:", err)
@@ -72,9 +79,12 @@ func main() {
 			log.Println("marshal error:", err)
 			continue
 		}
-
-		if err := p.Publish(context.Background(), raw.Symbol, bytes); err != nil {
-			log.Println("publish error:", err)
-		}
+		
+		go func(symbol string, payload []byte){
+			if err := p.Publish(context.Background(), symbol, payload); err != nil {
+				log.Println("publish error:", err)
+			}
+		}(raw.Symbol, bytes)
+		
 	}
 }
