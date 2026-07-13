@@ -1,0 +1,69 @@
+name: Build and deploy to homelab
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  INGESTER_IMAGE: ghcr.io/${{ github.repository_owner }}/crypto-ingester
+  CONSUMER_IMAGE: ghcr.io/${{ github.repository_owner }}/crypto-consumer
+
+jobs:
+  build-and-update-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push ingester image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.ingester
+          push: true
+          tags: |
+            ${{ env.INGESTER_IMAGE }}:${{ github.sha }}
+            ${{ env.INGESTER_IMAGE }}:latest
+
+      - name: Build and push consumer image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.consumer
+          push: true
+          tags: |
+            ${{ env.CONSUMER_IMAGE }}:${{ github.sha }}
+            ${{ env.CONSUMER_IMAGE }}:latest
+
+      - name: Checkout homelab_config
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/homelab_config
+          token: ${{ secrets.HOMELAB_K3S }}
+          path: homelab
+
+      - name: Update manifests with new image tags
+        run: |
+          sed -i "s|image: ghcr.io/[^ ]*/crypto-ingester:.*|image: ${{ env.INGESTER_IMAGE }}:${{ github.sha }}|" homelab/apps/crypto-analytics/k8s/ingester.yaml
+          sed -i "s|image: ghcr.io/[^ ]*/crypto-consumer:.*|image: ${{ env.CONSUMER_IMAGE }}:${{ github.sha }}|" homelab/apps/crypto-analytics/k8s/consumer.yaml
+
+      - name: Commit and push updated manifests
+        working-directory: homelab
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add apps/crypto-analytics/k8s
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "crypto-analytics: deploy image ${{ github.sha }}"
+          git push
