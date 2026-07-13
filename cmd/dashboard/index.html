@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crypto Analytics</title>
+<style>
+  :root {
+    --page: #f9f9f7; --surface: #fcfcfb;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --up: #2a78d6; --down: #e34948;
+    --delta-up: #006300; --delta-down: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page: #0d0d0d; --surface: #1a1a19;
+      --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --up: #3987e5; --down: #e66767;
+      --delta-up: #0ca30c; --delta-down: #d03b3b;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--page); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 20px; max-width: 1100px; margin: 0 auto;
+  }
+  h1 { font-size: 16px; font-weight: 600; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 16px; }
+  .filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .filters select, .filters button {
+    font: inherit; color: var(--ink-2); background: var(--surface);
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer;
+  }
+  .filters button.on { color: var(--ink); font-weight: 600; border-color: var(--axis); }
+  .spacer { flex: 1; }
+  .tiles { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px 14px; min-width: 130px;
+  }
+  .tile .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .tile .v { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  .tile .v.up { color: var(--delta-up); } .tile .v.down { color: var(--delta-down); }
+  .panel {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; position: relative;
+  }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  canvas { width: 100%; height: 380px; display: block; cursor: crosshair; }
+  #tooltip {
+    position: absolute; pointer-events: none; display: none; z-index: 2;
+    background: var(--surface); border: 1px solid var(--axis); border-radius: 6px;
+    padding: 6px 9px; font-size: 12px; color: var(--ink-2); white-space: pre;
+    box-shadow: 0 2px 8px rgba(0,0,0,.15);
+  }
+  #tooltip b { color: var(--ink); }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; font-size: 13px; }
+  th, td { text-align: right; padding: 5px 10px; border-bottom: 1px solid var(--grid); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--muted); font-weight: 500; }
+  #table-wrap { display: none; max-height: 380px; overflow-y: auto; }
+  .msg { color: var(--muted); padding: 60px 0; text-align: center; }
+</style>
+</head>
+<body>
+<h1>Crypto Analytics</h1>
+<div class="sub">1-minute OHLCV candles, aggregated from the Binance trade stream</div>
+
+<div class="filters">
+  <select id="symbol" aria-label="Symbol"></select>
+  <button data-hours="1">1h</button>
+  <button data-hours="6" class="on">6h</button>
+  <button data-hours="24">24h</button>
+  <button data-hours="72">3d</button>
+  <span class="spacer"></span>
+  <button id="view-toggle">Table</button>
+</div>
+
+<div class="tiles">
+  <div class="tile"><div class="k">Last price</div><div class="v" id="t-last">–</div></div>
+  <div class="tile"><div class="k">Change (range)</div><div class="v" id="t-change">–</div></div>
+  <div class="tile"><div class="k">Volume (range)</div><div class="v" id="t-vol">–</div></div>
+  <div class="tile"><div class="k">Trades (range)</div><div class="v" id="t-trades">–</div></div>
+</div>
+
+<div class="panel">
+  <div class="legend">
+    <span><i id="lg-up"></i>Close above open</span>
+    <span><i id="lg-down"></i>Close below open</span>
+  </div>
+  <canvas id="chart"></canvas>
+  <div id="tooltip"></div>
+  <div id="table-wrap">
+    <table>
+      <thead><tr><th>Time (UTC)</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th><th>Trades</th></tr></thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+  <div class="msg" id="msg" style="display:none"></div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+let hours = 6, candles = [], hover = -1, tableMode = false;
+
+const fmtP = v => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtT = t => new Date(t).toISOString().slice(11, 16);
+const fmtD = t => new Date(t).toISOString().slice(5, 16).replace("T", " ");
+
+async function load() {
+  const symbol = $("symbol").value;
+  if (!symbol) return;
+  const res = await fetch(`/api/candles?symbol=${encodeURIComponent(symbol)}&hours=${hours}`);
+  candles = res.ok ? await res.json() : [];
+  render();
+}
+
+function render() {
+  const has = candles.length > 0;
+  $("msg").style.display = has ? "none" : "block";
+  $("msg").textContent = "No candles in this range yet.";
+  $("chart").style.display = !tableMode && has ? "block" : "none";
+  $("table-wrap").style.display = tableMode && has ? "block" : "none";
+  if (!has) { tiles(); return; }
+  tiles();
+  if (tableMode) table(); else draw();
+}
+
+function tiles() {
+  const n = candles.length;
+  $("t-last").textContent = n ? fmtP(candles[n-1].c) : "–";
+  const el = $("t-change");
+  if (n) {
+    const delta = candles[n-1].c - candles[0].o;
+    const pct = 100 * delta / candles[0].o;
+    el.textContent = `${delta >= 0 ? "+" : ""}${pct.toFixed(2)}%`;
+    el.className = "v " + (delta >= 0 ? "up" : "down");
+  } else { el.textContent = "–"; el.className = "v"; }
+  $("t-vol").textContent = n ? candles.reduce((a, c) => a + c.v, 0).toFixed(3) : "–";
+  $("t-trades").textContent = n ? candles.reduce((a, c) => a + c.n, 0).toLocaleString() : "–";
+}
+
+function table() {
+  $("table-body").innerHTML = candles.slice().reverse().map(c =>
+    `<tr><td>${fmtD(c.t)}</td><td>${fmtP(c.o)}</td><td>${fmtP(c.h)}</td><td>${fmtP(c.l)}</td>` +
+    `<td>${fmtP(c.c)}</td><td>${c.v.toFixed(5)}</td><td>${c.n.toLocaleString()}</td></tr>`).join("");
+}
+
+function draw() {
+  const cv = $("chart"), dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+
+  const padL = 8, padR = 64, padT = 8, padB = 22;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  let lo = Math.min(...candles.map(c => c.l)), hi = Math.max(...candles.map(c => c.h));
+  const pad = (hi - lo || hi * 0.001) * 0.05; lo -= pad; hi += pad;
+  const y = v => padT + plotH * (1 - (v - lo) / (hi - lo));
+  const step = plotW / candles.length;
+  const x = i => padL + step * (i + 0.5);
+  const bw = Math.max(1, Math.min(9, step * 0.7));
+
+  ctx.font = "11px system-ui, sans-serif";
+  ctx.strokeStyle = css("--grid"); ctx.fillStyle = css("--muted"); ctx.lineWidth = 1;
+  const ticks = 5;
+  for (let i = 0; i <= ticks; i++) {
+    const v = lo + (hi - lo) * i / ticks, yy = Math.round(y(v)) + 0.5;
+    ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(W - padR, yy); ctx.stroke();
+    ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText(fmtP(v), W - padR + 6, yy);
+  }
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  const labelEvery = Math.ceil(candles.length / Math.floor(plotW / 70));
+  for (let i = 0; i < candles.length; i += labelEvery)
+    ctx.fillText(fmtT(candles[i].t), x(i), H - padB + 6);
+
+  const upC = css("--up"), downC = css("--down");
+  candles.forEach((c, i) => {
+    const up = c.c >= c.o, color = up ? upC : downC, xx = x(i);
+    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(xx, y(c.h)); ctx.lineTo(xx, y(c.l)); ctx.stroke();
+    const top = y(Math.max(c.o, c.c));
+    const hgt = Math.max(1, Math.abs(y(c.o) - y(c.c)));
+    ctx.beginPath(); ctx.roundRect(xx - bw / 2, top, bw, hgt, 1); ctx.fill();
+  });
+
+  if (hover >= 0 && hover < candles.length) {
+    const xx = Math.round(x(hover)) + 0.5;
+    ctx.strokeStyle = css("--axis"); ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(xx, padT); ctx.lineTo(xx, H - padB); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  cv._geom = { padL, padR, padT, padB, step, W, H };
+}
+
+$("chart").addEventListener("mousemove", e => {
+  const cv = $("chart"), g = cv._geom;
+  if (!g || !candles.length) return;
+  const r = cv.getBoundingClientRect();
+  const i = Math.floor((e.clientX - r.left - g.padL) / g.step);
+  if (i < 0 || i >= candles.length) { hideHover(); return; }
+  if (i !== hover) { hover = i; draw(); }
+  const c = candles[i], tip = $("tooltip");
+  tip.innerHTML = `<b>${fmtD(c.t)} UTC</b>\nO ${fmtP(c.o)}  H ${fmtP(c.h)}\nL ${fmtP(c.l)}  C ${fmtP(c.c)}\nVol ${c.v.toFixed(5)} · ${c.n.toLocaleString()} trades`;
+  tip.style.display = "block";
+  const panel = cv.parentElement.getBoundingClientRect();
+  const px = e.clientX - panel.left + 14, py = e.clientY - panel.top + 14;
+  tip.style.left = Math.min(px, panel.width - tip.offsetWidth - 8) + "px";
+  tip.style.top = py + "px";
+});
+function hideHover() { if (hover !== -1) { hover = -1; draw(); } $("tooltip").style.display = "none"; }
+$("chart").addEventListener("mouseleave", hideHover);
+
+document.querySelectorAll("[data-hours]").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("[data-hours]").forEach(x => x.classList.remove("on"));
+  b.classList.add("on");
+  hours = +b.dataset.hours;
+  load();
+}));
+$("view-toggle").addEventListener("click", () => {
+  tableMode = !tableMode;
+  $("view-toggle").textContent = tableMode ? "Chart" : "Table";
+  render();
+});
+$("symbol").addEventListener("change", load);
+window.addEventListener("resize", () => { if (!tableMode) draw(); });
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { legend(); render(); });
+
+function legend() { $("lg-up").style.background = css("--up"); $("lg-down").style.background = css("--down"); }
+
+async function init() {
+  legend();
+  const res = await fetch("/api/symbols");
+  const syms = res.ok ? await res.json() : [];
+  $("symbol").innerHTML = syms.map(s => `<option>${s}</option>`).join("");
+  await load();
+  setInterval(load, 60000);
+}
+init();
+</script>
+</body>
+</html>

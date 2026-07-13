@@ -12,6 +12,7 @@ permissions:
 env:
   INGESTER_IMAGE: ghcr.io/${{ github.repository_owner }}/crypto-ingester
   CONSUMER_IMAGE: ghcr.io/${{ github.repository_owner }}/crypto-consumer
+  DASHBOARD_IMAGE: ghcr.io/${{ github.repository_owner }}/crypto-dashboard
 
 jobs:
   build-and-update-manifests:
@@ -46,6 +47,16 @@ jobs:
             ${{ env.CONSUMER_IMAGE }}:${{ github.sha }}
             ${{ env.CONSUMER_IMAGE }}:latest
 
+      - name: Build and push dashboard image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.dashboard
+          push: true
+          tags: |
+            ${{ env.DASHBOARD_IMAGE }}:${{ github.sha }}
+            ${{ env.DASHBOARD_IMAGE }}:latest
+
       - name: Checkout homelab_config
         uses: actions/checkout@v4
         with:
@@ -57,6 +68,7 @@ jobs:
         run: |
           sed -i "s|image: ghcr.io/[^ ]*/crypto-ingester:.*|image: ${{ env.INGESTER_IMAGE }}:${{ github.sha }}|" homelab/apps/crypto-analytics/k8s/ingester.yaml
           sed -i "s|image: ghcr.io/[^ ]*/crypto-consumer:.*|image: ${{ env.CONSUMER_IMAGE }}:${{ github.sha }}|" homelab/apps/crypto-analytics/k8s/consumer.yaml
+          sed -i "s|image: ghcr.io/[^ ]*/crypto-dashboard:.*|image: ${{ env.DASHBOARD_IMAGE }}:${{ github.sha }}|" homelab/apps/crypto-analytics/k8s/dashboard.yaml
 
       - name: Commit and push updated manifests
         working-directory: homelab
