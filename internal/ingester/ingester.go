@@ -36,64 +36,89 @@ func New(wsURL string, p *producer.Producer) *Ingester {
 	}
 }
 
-func (i *Ingester) Run() {
-	conn, _, err := websocket.DefaultDialer.Dial(i.wsURL, nil)
+func (i *Ingester) Run(ctx context.Context) {
+	conn, _, err := websocket.DefaultDialer.DialContext(ctx, i.wsURL, nil)
 	if err != nil {
 		log.Fatal("dial:", err)
 	}
-	defer conn.Close()
-
 	log.Println("Connected to", i.wsURL)
+
 	for {
-		for {
-			_, msg, err := conn.ReadMessage()
-			if err != nil {
-				log.Println("Read error, attempting exponential backoff:", err)
-				break
-			}
-
-			var raw rawTrade
-			if err := json.Unmarshal(msg, &raw); err != nil {
-				log.Println("parse error:", err)
-				continue
-			}
-
-			event := &tradepb.TradeEvent{
-				EventType: raw.EventType,
-				EventTime: raw.EventTime,
-				Symbol:    raw.Symbol,
-				TradeId:   raw.TradeID,
-				Price:     raw.Price,
-				Quantity:  raw.Quantity,
-				TradeTime: raw.TradeTime,
-				IsMaker:   raw.IsMaker,
-			}
-
-			bytes, err := proto.Marshal(event)
-			if err != nil {
-				log.Println("marshal error:", err)
-				continue
-			}
-
-			go func(symbol string, payload []byte) {
-				if err := i.producer.Publish(context.Background(), symbol, payload); err != nil {
-					log.Println("publish error:", err)
-				}
-			}(raw.Symbol, bytes)
+		i.readLoop(ctx, conn)
+		if ctx.Err() != nil {
+			return
 		}
 
-		conn.Close()
 		exp := 0
 		for {
-			conn, _, err = websocket.DefaultDialer.Dial(i.wsURL, nil)
+			conn, _, err = websocket.DefaultDialer.DialContext(ctx, i.wsURL, nil)
 			if err == nil {
+				log.Println("Reconnected to", i.wsURL)
 				break
 			}
 			log.Println("Retry failed, waiting...", time.Duration(1<<exp)*time.Second)
-			time.Sleep(time.Duration(1<<exp) * time.Second)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Duration(1<<exp) * time.Second):
+			}
 			if exp < 5 {
 				exp++
 			}
+		}
+	}
+}
+
+// readLoop reads trades until the connection drops or ctx is cancelled. The
+// watcher goroutine closes the connection on cancellation, which is the only
+// way to unblock the blocking ReadMessage call.
+func (i *Ingester) readLoop(ctx context.Context, conn *websocket.Conn) {
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-done:
+		}
+		conn.Close()
+	}()
+
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			if ctx.Err() == nil {
+				log.Println("Read error, attempting exponential backoff:", err)
+			}
+			return
+		}
+
+		var raw rawTrade
+		if err := json.Unmarshal(msg, &raw); err != nil {
+			log.Println("parse error:", err)
+			continue
+		}
+
+		event := &tradepb.TradeEvent{
+			EventType: raw.EventType,
+			EventTime: raw.EventTime,
+			Symbol:    raw.Symbol,
+			TradeId:   raw.TradeID,
+			Price:     raw.Price,
+			Quantity:  raw.Quantity,
+			TradeTime: raw.TradeTime,
+			IsMaker:   raw.IsMaker,
+		}
+
+		bytes, err := proto.Marshal(event)
+		if err != nil {
+			log.Println("marshal error:", err)
+			continue
+		}
+
+		// Publish synchronously: a goroutine per message can reorder trades,
+		// which would defeat the per-symbol ordering the message key provides.
+		if err := i.producer.Publish(ctx, raw.Symbol, bytes); err != nil {
+			log.Println("publish error:", err)
 		}
 	}
 }

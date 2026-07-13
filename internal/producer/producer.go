@@ -3,6 +3,7 @@ package producer
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/segmentio/kafka-go"
 )
@@ -29,9 +30,15 @@ func New(ctx context.Context, brokerAddr, topic string) (*Producer, error) {
 
 	return &Producer{
 		writer: &kafka.Writer{
-			Addr:     kafka.TCP(brokerAddr),
-			Topic:    topic,
-			Balancer: &kafka.LeastBytes{},
+			Addr:  kafka.TCP(brokerAddr),
+			Topic: topic,
+			// Hash routes by message key so all trades for one symbol land on
+			// one partition (LeastBytes ignores the key entirely).
+			Balancer: &kafka.Hash{},
+			// The default BatchTimeout is 1s; a synchronous WriteMessages
+			// waits out the batch window, which would cap throughput at
+			// ~1 msg/s.
+			BatchTimeout: 10 * time.Millisecond,
 		},
 	}, nil
 }

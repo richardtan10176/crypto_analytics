@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/joho/godotenv"
 
@@ -18,12 +20,16 @@ func main() {
 	topic := os.Getenv("KAFKA_TOPIC")
 	wsURL := os.Getenv("BINANCE_WS_URL")
 
-	p, err := producer.New(context.Background(), brokerAddr, topic)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	p, err := producer.New(ctx, brokerAddr, topic)
 	if err != nil {
 		log.Fatal("producer:", err)
 	}
 	defer p.Close()
 
 	i := ingester.New(wsURL, p)
-	i.Run()
+	i.Run(ctx)
+	log.Println("ingester stopped")
 }
