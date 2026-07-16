@@ -3,6 +3,7 @@ package ingester
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"time"
 
@@ -36,17 +37,17 @@ func New(wsURL string, p *producer.Producer) *Ingester {
 	}
 }
 
-func (i *Ingester) Run(ctx context.Context) {
+func (i *Ingester) Run(ctx context.Context) error {
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, i.wsURL, nil)
 	if err != nil {
-		log.Fatal("dial:", err)
+		return fmt.Errorf("dial %s: %w", i.wsURL, err)
 	}
 	log.Println("Connected to", i.wsURL)
 
 	for {
 		i.readLoop(ctx, conn)
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
 
 		exp := 0
@@ -59,7 +60,7 @@ func (i *Ingester) Run(ctx context.Context) {
 			log.Println("Retry failed, waiting...", time.Duration(1<<exp)*time.Second)
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			case <-time.After(time.Duration(1<<exp) * time.Second):
 			}
 			if exp < 5 {

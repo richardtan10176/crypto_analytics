@@ -12,7 +12,12 @@ type Producer struct {
 	writer *kafka.Writer
 }
 
-func New(ctx context.Context, brokerAddr, topic string) (*Producer, error) {
+// New dials Kafka and ensures the topic exists with numPartitions partitions.
+// CreateTopics has no effect if the topic already exists, so raising
+// numPartitions here only takes effect for a brand-new topic — an existing
+// topic must be deleted/recreated (or widened out-of-band with
+// kafka-topics.sh --alter) to pick up the change.
+func New(ctx context.Context, brokerAddr, topic string, numPartitions int) (*Producer, error) {
 	conn, err := kafka.DialContext(ctx, "tcp", brokerAddr)
 	if err != nil {
 		return nil, fmt.Errorf("damn we couldnt get the broker: %w", err)
@@ -21,7 +26,7 @@ func New(ctx context.Context, brokerAddr, topic string) (*Producer, error) {
 
 	err = conn.CreateTopics(kafka.TopicConfig{
 		Topic:             topic,
-		NumPartitions:     1,
+		NumPartitions:     numPartitions,
 		ReplicationFactor: 1,
 	})
 	if err != nil {
