@@ -36,6 +36,7 @@
   }
   .filters button.on { color: var(--ink); font-weight: 600; border-color: var(--axis); }
   .spacer { flex: 1; }
+  .badge { color: var(--muted); font-size: 12px; }
   .tiles { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
   .tile {
     background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
@@ -68,7 +69,7 @@
 </head>
 <body>
 <h1>Crypto Analytics</h1>
-<div class="sub">1-minute OHLCV candles, aggregated from the Binance trade stream</div>
+<div class="sub">OHLCV candles aggregated from the Binance trade stream — granularity auto-scales with the selected range</div>
 
 <div class="filters">
   <select id="symbol" aria-label="Symbol"></select>
@@ -76,7 +77,11 @@
   <button data-hours="6" class="on">6h</button>
   <button data-hours="24">24h</button>
   <button data-hours="72">3d</button>
+  <button data-hours="168">7d</button>
+  <button data-hours="720">30d</button>
+  <button data-hours="2160">90d</button>
   <span class="spacer"></span>
+  <span class="badge" id="gran-badge"></span>
   <button id="view-toggle">Table</button>
 </div>
 
@@ -108,17 +113,27 @@
 const $ = id => document.getElementById(id);
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-let hours = 6, candles = [], hover = -1, tableMode = false;
+let hours = 6, granularity = "1m", candles = [], hover = -1, tableMode = false;
 
 const fmtP = v => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtT = t => new Date(t).toISOString().slice(11, 16);
 const fmtD = t => new Date(t).toISOString().slice(5, 16).replace("T", " ");
+const GRAN_LABEL = { "1m": "1-minute candles", "1h": "1-hour candles", "1d": "1-day candles" };
+
+function fmtAxis(t) {
+  const d = new Date(t);
+  if (granularity === "1d") return d.toISOString().slice(5, 10);
+  if (granularity === "1h") return d.toISOString().slice(5, 16).replace("T", " ");
+  return d.toISOString().slice(11, 16);
+}
 
 async function load() {
   const symbol = $("symbol").value;
   if (!symbol) return;
   const res = await fetch(`/api/candles?symbol=${encodeURIComponent(symbol)}&hours=${hours}`);
-  candles = res.ok ? await res.json() : [];
+  const data = res.ok ? await res.json() : { granularity: "1m", candles: [] };
+  granularity = data.granularity || "1m";
+  candles = data.candles || [];
+  $("gran-badge").textContent = GRAN_LABEL[granularity] || "";
   render();
 }
 
@@ -182,7 +197,7 @@ function draw() {
   ctx.textAlign = "center"; ctx.textBaseline = "top";
   const labelEvery = Math.ceil(candles.length / Math.floor(plotW / 70));
   for (let i = 0; i < candles.length; i += labelEvery)
-    ctx.fillText(fmtT(candles[i].t), x(i), H - padB + 6);
+    ctx.fillText(fmtAxis(candles[i].t), x(i), H - padB + 6);
 
   const upC = css("--up"), downC = css("--down");
   candles.forEach((c, i) => {

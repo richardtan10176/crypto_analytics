@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -26,6 +27,26 @@ type candle struct {
 	Close       float64   `json:"c"`
 	Volume      float64   `json:"v"`
 	TradeCount  int64     `json:"n"`
+}
+
+type candlesResponse struct {
+	Granularity string   `json:"granularity"`
+	Candles     []candle `json:"candles"`
+}
+
+// granularityFor picks the rollup relation to query based on the requested
+// range, so long ranges don't require pulling thousands of 1-minute candles.
+// The returned table name is always one of these three literals (never
+// derived from request input), so interpolating it into the query is safe.
+func granularityFor(hours time.Duration) (table, label string) {
+	switch {
+	case hours <= 24*time.Hour:
+		return "ohlcv_1m", "1m"
+	case hours <= 14*24*time.Hour:
+		return "ohlcv_1h", "1h"
+	default:
+		return "ohlcv_1d", "1d"
+	}
 }
 
 type server struct {
@@ -59,16 +80,18 @@ func (s *server) candles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hours, err := time.ParseDuration(r.URL.Query().Get("hours") + "h")
-	if err != nil || hours < time.Hour || hours > 7*24*time.Hour {
-		http.Error(w, "hours must be a number between 1 and 168", http.StatusBadRequest)
+	if err != nil || hours < time.Hour || hours > 90*24*time.Hour {
+		http.Error(w, "hours must be a number between 1 and 2160", http.StatusBadRequest)
 		return
 	}
 
-	rows, err := s.db.Query(r.Context(), `
+	table, granularity := granularityFor(hours)
+
+	rows, err := s.db.Query(r.Context(), fmt.Sprintf(`
 		SELECT window_start, open, high, low, close, volume, trade_count
-		FROM ohlcv_1m
+		FROM %s
 		WHERE symbol = $1 AND window_start >= now() - $2::interval
-		ORDER BY window_start`, symbol, hours.String())
+		ORDER BY window_start`, table), symbol, hours.String())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -84,7 +107,7 @@ func (s *server) candles(w http.ResponseWriter, r *http.Request) {
 		}
 		candles = append(candles, c)
 	}
-	writeJSON(w, candles)
+	writeJSON(w, candlesResponse{Granularity: granularity, Candles: candles})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
